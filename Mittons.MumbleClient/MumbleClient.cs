@@ -1,8 +1,6 @@
 ﻿using System;
-using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.Http;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
@@ -18,21 +16,15 @@ namespace Mittons.Net
     {
         public Uri BaseAddress { get; }
 
-        public bool IsVoiceSupportEnabled { get; }
-
         private string Username => new Regex("^([^:]*)(:(.*))?$").Replace(BaseAddress.UserInfo, "$1");
 
         private string Password => new Regex("^([^:]*)(:(.*))?$").Replace(BaseAddress.UserInfo, "$3");
-
-        // public string[] Tokens { get; }
-
-        // public string ServerName { get; }
 
         public X509CertificateCollection? ClientCertificates { get; }
 
         public Func<object, X509Certificate2, X509Chain, SslPolicyErrors, bool>? ServerCertificateCustomValidationCallback { get; set; }
 
-        private readonly TcpClient _tcpClient = new TcpClient();
+        private readonly TcpClient _tcpClient = new ();
 
         private SslStream? _tcpSslStream;
 
@@ -49,17 +41,21 @@ namespace Mittons.Net
 
         public MumbleProto.Authenticate ClientAuthentication { get; }
 
-        public MumbleClientHandler(Uri baseAddress, bool isVoiceSupportEnabled)
+        public MumbleClientHandler(Uri baseAddress) : this(baseAddress, false, new string[0])
+        {
+        }
+
+        public MumbleClientHandler(Uri baseAddress, bool isBot, string[] tokens)
         {
             BaseAddress = baseAddress;
-            IsVoiceSupportEnabled = isVoiceSupportEnabled;
             ClientAuthentication = new MumbleProto.Authenticate
             {
                 Username = Username,
                 Password = Password,
-                ClientType = 0,
+                ClientType = isBot ? 1 : 0,
                 Opus = true
             };
+            ClientAuthentication.Tokens.AddRange(tokens);
         }
 
         public Task SendAsync(MumbleRequestMessage request, CancellationToken cancellationToken = default)
@@ -97,7 +93,7 @@ namespace Mittons.Net
         {
             await ConnectAsync();
             await ExchangeVersionInformationAsync(cancellationToken);
-            // await AuthenticateAsync(cancellationToken);
+            await AuthenticateAsync(cancellationToken);
         }
 
         private async Task ConnectAsync()
@@ -125,7 +121,7 @@ namespace Mittons.Net
                 throw new NullReferenceException("Ssl Stream has not been opened.");
             }
 
-            await _tcpSslStream.WriteAsync(BitConverter.GetBytes((short)type), 0, 2, cancellationToken);
+            await _tcpSslStream.WriteAsync(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)type)), 0, 2, cancellationToken);
             message.WriteDelimitedTo(_tcpSslStream);
 
             await _tcpSslStream.FlushAsync(cancellationToken);
@@ -144,58 +140,6 @@ namespace Mittons.Net
 
             return MumbleProto.Version.Parser.ParseDelimitedFrom(_tcpSslStream);
         }
-
-        // protected internal override async Task<MumbleResponseMessage<T>> SendAsync<T>(MumbleRequestMessage request, CancellationToken cancellationToken)
-        // {
-        //     if (_tcpSslStream is null)
-        //     {
-        //         throw new NullReferenceException("Ssl Stream has not been opened.");
-        //     }
-
-        //     await _tcpSslStream.WriteAsync(BitConverter.GetBytes((short)request.PacketType), 0, 2, cancellationToken);
-        //     request.Content.WriteTo(_tcpSslStream);
-
-        //     await _tcpSslStream.FlushAsync(cancellationToken);
-        //     await _tcpClient.GetStream().FlushAsync(cancellationToken);
-
-
-        //     var packetTypeBuffer = new byte[2];
-        //     await _tcpSslStream.ReadAsync(packetTypeBuffer, 0, 2, cancellationToken);
-
-        //     var packetType = (PacketType)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(packetTypeBuffer, 0));
-
-        //     switch (packetType)
-        //     {
-        //         case PacketType.Version:
-        //             ServerVersion = MumbleProto.Version.Parser.ParseFrom(_tcpSslStream);
-
-        //             break;
-        //     }
-
-        //     return new MumbleResponseMessage<T>
-        //     {
-        //         RequestMessage = request
-        //     };
-        // }
-
-        // protected internal override async Task<MumbleResponseMessage<IMessage>> SendAsync(MumbleRequestMessage request, CancellationToken cancellationToken)
-        // {
-        //     if (_tcpSslStream is null)
-        //     {
-        //         throw new NullReferenceException("Ssl Stream has not been opened.");
-        //     }
-
-        //     await _tcpSslStream.WriteAsync(BitConverter.GetBytes((short)request.PacketType), 0, 2, cancellationToken);
-        //     request.Content.WriteTo(_tcpSslStream);
-
-        //     await _tcpSslStream.FlushAsync(cancellationToken);
-        //     await _tcpClient.GetStream().FlushAsync(cancellationToken);
-
-        //     return new MumbleResponseMessage<IMessage>
-        //     {
-        //         RequestMessage = request
-        //     };
-        // }
     }
 
     public abstract class MumbleMessageHandler
@@ -207,15 +151,15 @@ namespace Mittons.Net
 
     public class MumbleRequestMessage
     {
-        public IMessage Content { get; set; }
+        public IMessage? Content { get; set; }
 
         public PacketType PacketType { get; }
 
-        public MumbleRequestMessage()
+        public MumbleRequestMessage() : this(default, default)
         {
         }
 
-        public MumbleRequestMessage(PacketType packetType, IMessage content)
+        public MumbleRequestMessage(PacketType packetType, IMessage? content)
         {
             PacketType = packetType;
             Content = content;
@@ -224,7 +168,7 @@ namespace Mittons.Net
 
     public class MumbleResponseMessage<T> where T : IMessage
     {
-        public T Content { get; set; }
+        public T? Content { get; set; }
 
         public PacketType PacketType { get; }
 

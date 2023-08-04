@@ -75,7 +75,7 @@ public class HandshakeTests : IDisposable
     public async Task SendAsync_WhenSendingTheFirstRequest_ExpectASecurTcpConnectionToBeInitiated()
     {
         // Arrange
-        var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://kmitton:mypass@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"), false)
+        var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://myuser:mypass@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"))
         {
             ServerCertificateCustomValidationCallback = (_, _, _, _) => true
         };
@@ -97,7 +97,7 @@ public class HandshakeTests : IDisposable
         // Arrange
         var expectedPacketType = PacketType.Version;
 
-        var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://kmitton:mypass@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"), false)
+        var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://myuser:mypass@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"))
         {
             ServerCertificateCustomValidationCallback = (_, _, _, _) => true
         };
@@ -108,14 +108,57 @@ public class HandshakeTests : IDisposable
         var packetTypeBuffer = new byte[2];
         await _serverSslStream!.ReadAsync(packetTypeBuffer, 0, 2, _cancellationToken);
 
-        var acutalPacketType = (PacketType)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(packetTypeBuffer, 0));
+        var actualPacketType = (PacketType)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(packetTypeBuffer, 0));
 
         var actualClientVersion = MumbleProto.Version.Parser.ParseDelimitedFrom(_serverSslStream);
 
         // Assert
         Assert.Equal(_serverVerion, mumbleClientHandler.ServerVersion);
         Assert.Equal(MumbleClientHandler.ClientVersion, actualClientVersion);
-        Assert.Equal(expectedPacketType, acutalPacketType);
+        Assert.Equal(expectedPacketType, actualPacketType);
+    }
+
+    [Theory]
+    [InlineData("myuser", "mypass", false, new string[0])]
+    [InlineData("otheruser", "otherpassword", true, new string[] { "test", "other" })]
+    public async void SendAsync_WhenVersionInformationHasBeenExchanged_ExpectTheClientToAuthenticate(
+        string username,
+        string password,
+        bool isBot,
+        string[] tokens
+    )
+    {
+        // Arrange
+        var expectedPacketType = PacketType.Authenticate;
+        var expectedAuthentication = new MumbleProto.Authenticate()
+        {
+            Username = username,
+            Password = password,
+            ClientType = isBot ? 1 : 0,
+            Opus = true
+        };
+        expectedAuthentication.Tokens.AddRange(tokens);
+
+        var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://{username}:{password}@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"), isBot, tokens)
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        };
+
+        // Act
+        await mumbleClientHandler.SendAsync(_defaultRequest, _cancellationToken);
+
+        var packetTypeBuffer = new byte[2];
+
+        await _serverSslStream!.ReadAsync(packetTypeBuffer, 0, 2, _cancellationToken);
+        MumbleProto.Version.Parser.ParseDelimitedFrom(_serverSslStream);
+
+        await _serverSslStream!.ReadAsync(packetTypeBuffer, 0, 2, _cancellationToken);
+        var actualPacketType = (PacketType)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(packetTypeBuffer, 0));
+        var acutalAuthentication = MumbleProto.Authenticate.Parser.ParseDelimitedFrom(_serverSslStream);
+
+        // Assert
+        Assert.Equal(expectedAuthentication, acutalAuthentication);
+        Assert.Equal(expectedPacketType, actualPacketType);
     }
 
     // [Fact]
