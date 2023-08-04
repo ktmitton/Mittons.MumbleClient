@@ -3,6 +3,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using Google.Protobuf;
 using Mittons.Net;
 
 namespace Mittons.MumbleClient.Tests.Unit;
@@ -13,11 +14,20 @@ public class HandshakeTests : IDisposable
 
     private TcpClient? _serverTcpClient;
 
-    private SslStream _serverSslStream;
+    private SslStream? _serverSslStream;
 
     private readonly CancellationToken _cancellationToken = new();
 
     private readonly MumbleRequestMessage _defaultRequest = new();
+
+    private readonly MumbleProto.Version _serverVerion = new ()
+    {
+        Os = "Test OS",
+        OsVersion = "1.0.0",
+        Release = "2.0.0-alpha",
+        VersionV1 = 22,
+        VersionV2 = 29843
+    };
 
     // DO NOT SIMPLIFY THIS
     // We do an export because otherwise the cert breaks on windos
@@ -44,7 +54,12 @@ public class HandshakeTests : IDisposable
             _serverSslStream = new SslStream(_serverTcpClient.GetStream());
             _serverSslStream.BeginAuthenticateAsServer(_serverCertificate, (asyncResult) => {
                 _serverSslStream.EndAuthenticateAsServer(asyncResult);
-                var a = 1;
+
+                _serverSslStream.Write(BitConverter.GetBytes((short)PacketType.Version));
+                _serverVerion.WriteDelimitedTo(_serverSslStream);
+
+                _serverSslStream.Flush();
+                _serverTcpClient.GetStream().Flush();
             }, _serverSslStream);
         }, _tcpListener);
     }
@@ -57,7 +72,7 @@ public class HandshakeTests : IDisposable
     }
 
     [Fact]
-    public async Task SendAsync_WhenSendingTheFirstRequest_ExpectASecurTcpConnectionToBeMade()
+    public async Task SendAsync_WhenSendingTheFirstRequest_ExpectASecurTcpConnectionToBeInitiated()
     {
         // Arrange
         var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://kmitton:mypass@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"), false)
@@ -66,7 +81,7 @@ public class HandshakeTests : IDisposable
         };
 
         // Act
-        await mumbleClientHandler.SendAsync(_defaultRequest, default);
+        await mumbleClientHandler.SendAsync(_defaultRequest, _cancellationToken);
 
         // Assert
         Assert.True(_serverTcpClient?.Connected);
@@ -77,18 +92,30 @@ public class HandshakeTests : IDisposable
     }
 
     [Fact]
-    public async void Handshake_WhenAConnectionIsMade_ExpectClientVersionInformationToBeSent()
+    public async void SendAsync_WhenAConnectionIsInitiated_ExpectVersionInformationToBeExchanged()
     {
-        // // Arrange
-        // var mumbleClientHandler = new MumbleClientHandler(new Uri("mumble://kmitton:mypass@127.0.0.1"), false);
-        // var acceptResult = _tcpListener.AcceptTcpClientAsync();
-        // _tcpClient.Connect("127.0.0.1", ((IPEndPoint)_tcpListener.LocalEndpoint).Port);
-        // var a = await acceptResult;
-        // Assert.True(false);
+        // Arrange
+        var expectedPacketType = PacketType.Version;
 
-        // // Act
+        var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://kmitton:mypass@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"), false)
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        };
 
-        // // Assert
+        // Act
+        await mumbleClientHandler.SendAsync(_defaultRequest, _cancellationToken);
+
+        var packetTypeBuffer = new byte[2];
+        await _serverSslStream!.ReadAsync(packetTypeBuffer, 0, 2, _cancellationToken);
+
+        var acutalPacketType = (PacketType)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(packetTypeBuffer, 0));
+
+        var actualClientVersion = MumbleProto.Version.Parser.ParseDelimitedFrom(_serverSslStream);
+
+        // Assert
+        Assert.Equal(_serverVerion, mumbleClientHandler.ServerVersion);
+        Assert.Equal(MumbleClientHandler.ClientVersion, actualClientVersion);
+        Assert.Equal(expectedPacketType, acutalPacketType);
     }
 
     // [Fact]

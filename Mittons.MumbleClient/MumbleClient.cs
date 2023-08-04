@@ -36,7 +36,7 @@ namespace Mittons.Net
 
         private SslStream? _tcpSslStream;
 
-        public MumbleProto.Version ClientVersion { get; } = new MumbleProto.Version
+        public static MumbleProto.Version ClientVersion { get; } = new MumbleProto.Version
         {
             Release = "Mittons.MumbleClient",
             Os = Environment.OSVersion.ToString(),
@@ -96,7 +96,7 @@ namespace Mittons.Net
         private async Task HandshakeAsync(CancellationToken cancellationToken = default)
         {
             await ConnectAsync();
-            // await ExchangeVersionInformationAsync(cancellationToken);
+            await ExchangeVersionInformationAsync(cancellationToken);
             // await AuthenticateAsync(cancellationToken);
         }
 
@@ -106,7 +106,6 @@ namespace Mittons.Net
 
             _tcpSslStream = new SslStream(_tcpClient.GetStream(), false, ValidateCertificate, SelectCertificate);
             await _tcpSslStream.AuthenticateAsClientAsync(BaseAddress.Host);
-            var a = 1;
         }
 
         private async Task ExchangeVersionInformationAsync(CancellationToken cancellationToken = default)
@@ -127,7 +126,7 @@ namespace Mittons.Net
             }
 
             await _tcpSslStream.WriteAsync(BitConverter.GetBytes((short)type), 0, 2, cancellationToken);
-            message.WriteTo(_tcpSslStream);
+            message.WriteDelimitedTo(_tcpSslStream);
 
             await _tcpSslStream.FlushAsync(cancellationToken);
             await _tcpClient.GetStream().FlushAsync(cancellationToken);
@@ -143,9 +142,7 @@ namespace Mittons.Net
             var packetTypeBuffer = new byte[2];
             await _tcpSslStream.ReadAsync(packetTypeBuffer, 0, 2, cancellationToken);
 
-            // var packetType = (PacketType)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(packetTypeBuffer, 0));
-
-            return MumbleProto.Version.Parser.ParseFrom(_tcpSslStream);
+            return MumbleProto.Version.Parser.ParseDelimitedFrom(_tcpSslStream);
         }
 
         // protected internal override async Task<MumbleResponseMessage<T>> SendAsync<T>(MumbleRequestMessage request, CancellationToken cancellationToken)
