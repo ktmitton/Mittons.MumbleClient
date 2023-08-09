@@ -29,6 +29,13 @@ public class HandshakeTests : IDisposable
         VersionV2 = 29843
     };
 
+    private readonly MumbleProto.CryptSetup _serverCryptoSetup = new ()
+    {
+        ClientNonce = ByteString.CopyFromUtf8(Guid.NewGuid().ToString()),
+        ServerNonce = ByteString.CopyFromUtf8(Guid.NewGuid().ToString()),
+        Key = ByteString.CopyFromUtf8(Guid.NewGuid().ToString())
+    };
+
     // DO NOT SIMPLIFY THIS
     // We do an export because otherwise the cert breaks on windos
     // See https://github.com/dotnet/runtime/issues/23749
@@ -57,6 +64,9 @@ public class HandshakeTests : IDisposable
 
                 _serverSslStream.Write(BitConverter.GetBytes((short)PacketType.Version));
                 _serverVerion.WriteDelimitedTo(_serverSslStream);
+
+                _serverSslStream.Write(BitConverter.GetBytes((short)PacketType.CryptSetup));
+                _serverCryptoSetup.WriteDelimitedTo(_serverSslStream);
 
                 _serverSslStream.Flush();
                 _serverTcpClient.GetStream().Flush();
@@ -92,7 +102,7 @@ public class HandshakeTests : IDisposable
     }
 
     [Fact]
-    public async void SendAsync_WhenAConnectionIsInitiated_ExpectVersionInformationToBeExchanged()
+    public async Task SendAsync_WhenAConnectionIsInitiated_ExpectVersionInformationToBeExchanged()
     {
         // Arrange
         var expectedPacketType = PacketType.Version;
@@ -121,7 +131,7 @@ public class HandshakeTests : IDisposable
     [Theory]
     [InlineData("myuser", "mypass", false, new string[0])]
     [InlineData("otheruser", "otherpassword", true, new string[] { "test", "other" })]
-    public async void SendAsync_WhenVersionInformationHasBeenExchanged_ExpectTheClientToAuthenticate(
+    public async Task SendAsync_WhenVersionInformationHasBeenExchanged_ExpectTheClientToAuthenticate(
         string username,
         string password,
         bool isBot,
@@ -159,6 +169,22 @@ public class HandshakeTests : IDisposable
         // Assert
         Assert.Equal(expectedAuthentication, acutalAuthentication);
         Assert.Equal(expectedPacketType, actualPacketType);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenTheClientIsAuthenticated_ExpectTheCryptoDataToBeProcessed()
+    {
+        // Arrange
+        var mumbleClientHandler = new MumbleClientHandler(new Uri($"mumble://myuser:mypass@127.0.0.1:{((IPEndPoint)_tcpListener.LocalEndpoint).Port}"), false, new string[0])
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        };
+
+        // Act
+        await mumbleClientHandler.SendAsync(_defaultRequest, _cancellationToken);
+
+        // Assert
+        Assert.Equal(_serverCryptoSetup, mumbleClientHandler.CryptoSetup);
     }
 
     // [Fact]

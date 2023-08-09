@@ -41,6 +41,8 @@ namespace Mittons.Net
 
         public MumbleProto.Authenticate ClientAuthentication { get; }
 
+        public MumbleProto.CryptSetup? CryptoSetup { get; private set; }
+
         public MumbleClientHandler(Uri baseAddress) : this(baseAddress, false, new string[0])
         {
         }
@@ -94,6 +96,7 @@ namespace Mittons.Net
             await ConnectAsync();
             await ExchangeVersionInformationAsync(cancellationToken);
             await AuthenticateAsync(cancellationToken);
+            await SetupCryptoAsync(cancellationToken);
         }
 
         private async Task ConnectAsync()
@@ -113,6 +116,19 @@ namespace Mittons.Net
 
         private Task AuthenticateAsync(CancellationToken cancellationToken)
             => SendPacketAsync(PacketType.Authenticate, ClientAuthentication, cancellationToken);
+
+        private async Task SetupCryptoAsync(CancellationToken cancellationToken)
+        {
+            if (_tcpSslStream is null)
+            {
+                throw new NullReferenceException("Ssl Stream has not been opened.");
+            }
+
+            var packetTypeBuffer = new byte[2];
+            await _tcpSslStream.ReadAsync(packetTypeBuffer, 0, 2, cancellationToken);
+
+            CryptoSetup = MumbleProto.CryptSetup.Parser.ParseDelimitedFrom(_tcpSslStream);
+        }
 
         private async Task SendPacketAsync(PacketType type, IMessage message, CancellationToken cancellationToken)
         {
@@ -178,6 +194,7 @@ namespace Mittons.Net
     public enum PacketType : short
     {
         Version = 0,
-        Authenticate = 2
+        Authenticate = 2,
+        CryptSetup = 15,
     }
 }
